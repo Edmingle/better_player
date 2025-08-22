@@ -338,9 +338,21 @@ bool _remoteCommandsInitialized = false;
                 } else {
                     assetPath = [_registrar lookupKeyForAsset:assetArg];
                 }
-                [player setDataSourceAsset:assetPath withKey:key withCertificateUrl:certificateUrl withLicenseUrl: licenseUrl cacheKey:cacheKey cacheManager:_cacheManager overriddenDuration:overriddenDuration];
+
+                 [player setDataSourceAsset:assetPath withKey:key withCertificateUrl:certificateUrl withLicenseUrl: licenseUrl cacheKey:cacheKey cacheManager:_cacheManager overriddenDuration:overriddenDuration];
+         
             } else if (uriArg) {
-                [player setDataSourceURL:[NSURL URLWithString:uriArg] withKey:key withCertificateUrl:certificateUrl withLicenseUrl: licenseUrl withHeaders:headers withCache: useCache cacheKey:cacheKey cacheManager:_cacheManager overriddenDuration:overriddenDuration videoExtension: videoExtension];
+             if (drmHeaders != [NSNull null] || drmHeaders != NULL) {
+                    [player setDataSourceURL:[NSURL URLWithString:uriArg] withKey:key 
+					withCertificateUrl:certificateUrl withLicenseUrl: licenseUrl 
+					withHeaders:headers withDrmHeaders:drmHeaders 
+					withCache: useCache cacheKey:cacheKey 
+                     cacheManager:_cacheManager 
+					overriddenDuration:overriddenDuration 
+					videoExtension: videoExtension];
+                } else {
+                    [player setDataSourceURL:[NSURL URLWithString:uriArg] withKey:key withCertificateUrl:certificateUrl withLicenseUrl: licenseUrl withHeaders:headers withCache: useCache cacheKey:cacheKey cacheManager:_cacheManager overriddenDuration:overriddenDuration videoExtension: videoExtension];
+                }   
             } else {
                 result(FlutterMethodNotImplemented);
             }
