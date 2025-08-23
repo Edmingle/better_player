@@ -67,7 +67,14 @@ NSString * DEFAULT_LICENSE_SERVER_URL = @"https://fps.ezdrm.com/api/licenses/";
 - (BOOL)resourceLoader:(AVAssetResourceLoader *)resourceLoader shouldWaitForLoadingOfRequestedResource:(AVAssetResourceLoadingRequest *)loadingRequest {
     NSURL *assetURI = loadingRequest.request.URL;
     NSString * str = assetURI.absoluteString;
-    NSString * mySubstring = [str substringFromIndex:str.length - 36];
+    
+    NSString * mySubstring;
+    if (str.length >= 36) {
+        mySubstring = [str substringFromIndex:str.length - 36];
+    } else {
+        mySubstring = str;
+        NSLog(@"Warning: Asset URL shorter than expected 36 characters, using full URL as asset ID: %@", str);
+    }
     _assetId = mySubstring;
     NSString * scheme = assetURI.scheme;
     NSData * requestBytes;
