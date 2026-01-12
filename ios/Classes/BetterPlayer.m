@@ -166,7 +166,7 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
         fps = (int) ceil(nominalFrameRate);
     }
     videoComposition.frameDuration = CMTimeMake(1, fps);
-    
+
     return videoComposition;
 }
 
@@ -201,7 +201,7 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
         NSLog(@"header is null");
         headers = @{};
     }
-    
+
     AVPlayerItem* item;
     if (useCache){
         if (cacheKey == [NSNull null]){
@@ -210,7 +210,7 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
         if (videoExtension == [NSNull null]){
             videoExtension = nil;
         }
-        
+
         item = [cacheManager getCachingPlayerItemForNormalPlayback:url cacheKey:cacheKey videoExtension: videoExtension headers:headers];
     } else {
         AVURLAsset* asset = [AVURLAsset URLAssetWithURL:url
@@ -600,10 +600,8 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
         result([FlutterError errorWithCode:@"unsupported_speed"
                                    message:@"Speed must be >= 0.0 and <= 2.0"
                                    details:nil]);
-    } else if ((speed > 1.0 && _player.currentItem.canPlayFastForward) ||
-               (speed < 1.0 && _player.currentItem.canPlaySlowForward)) {
-        _playerRate = speed;
-        result(nil);
+    } else if ((speed > 1.0) || (speed < 1.0)) {
+        _playerRate = speed; result(nil);
     } else {
         if (speed > 1.0) {
             result([FlutterError errorWithCode:@"unsupported_fast_forward"
