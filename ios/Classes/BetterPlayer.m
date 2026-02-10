@@ -213,12 +213,45 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
 
         item = [cacheManager getCachingPlayerItemForNormalPlayback:url cacheKey:cacheKey videoExtension: videoExtension headers:headers];
     } else {
-        AVURLAsset* asset = [AVURLAsset URLAssetWithURL:url
+
+        NSURL *finalUrl = url;
+        if (finalUrl && finalUrl.scheme == nil) {
+            // If it's a local path, make it a file URL; otherwise try https
+            if ([finalUrl.absoluteString hasPrefix:@"/"]) {
+                finalUrl = [NSURL fileURLWithPath:finalUrl.absoluteString];
+            } else {
+                finalUrl = [NSURL URLWithString:[@"https://" stringByAppendingString:finalUrl.absoluteString]];
+            }
+        }
+
+        NSString *raw = finalUrl.absoluteString ?: @"";
+        NSString *encoded = [raw stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLFragmentAllowedCharacterSet]];
+        if (encoded.length > 0) {
+            NSURL *tmp = [NSURL URLWithString:encoded];
+            if (tmp) finalUrl = tmp;
+        }
+
+        NSLog(@"BetterPlayer iOS: final video url = %@", finalUrl.absoluteString);
+        NSLog(@"BetterPlayer iOS: final scheme = %@", finalUrl.scheme);
+
+        AVURLAsset* asset = [AVURLAsset URLAssetWithURL:finalUrl
                                                 options:@{@"AVURLAssetHTTPHeaderFieldsKey" : headers}];
+
         if (certificateUrl && certificateUrl != [NSNull null] && [certificateUrl length] > 0) {
             NSURL * certificateNSURL = [[NSURL alloc] initWithString: certificateUrl];
             NSURL * licenseNSURL = [[NSURL alloc] initWithString: licenseUrl];
-            _loaderDelegate = [[BetterPlayerEzDrmAssetsLoaderDelegate alloc] init:certificateNSURL withLicenseURL:licenseNSURL];
+            NSString *licenseLower = [licenseUrl lowercaseString];
+
+            BOOL isGumlet = [licenseLower containsString:@"fairplay.gumlet.com"];
+
+            if (isGumlet) {
+                _loaderDelegate = [[BetterPlayerGumletAssetsLoaderDelegate alloc] init:certificateNSURL
+                                                                        withLicenseURL:licenseNSURL];
+            } else {
+                _loaderDelegate = [[BetterPlayerEzDrmAssetsLoaderDelegate alloc] init:certificateNSURL
+                                                                       withLicenseURL:licenseNSURL];
+            }
+
             dispatch_queue_attr_t qos = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_DEFAULT, -1);
             dispatch_queue_t streamQueue = dispatch_queue_create("streamQueue", qos);
             [asset.resourceLoader setDelegate:_loaderDelegate queue:streamQueue];
@@ -260,16 +293,49 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
 
             item = [cacheManager getCachingPlayerItemForNormalPlayback:url cacheKey:cacheKey videoExtension: videoExtension headers:headers];
         } else {
-            AVURLAsset* asset = [AVURLAsset URLAssetWithURL:url
+            NSURL *finalUrl = url;
+            if (finalUrl && finalUrl.scheme == nil) {
+                // If it's a local path, make it a file URL; otherwise try https
+                if ([finalUrl.absoluteString hasPrefix:@"/"]) {
+                    finalUrl = [NSURL fileURLWithPath:finalUrl.absoluteString];
+                } else {
+                    finalUrl = [NSURL URLWithString:[@"https://" stringByAppendingString:finalUrl.absoluteString]];
+                }
+            }
+
+            NSString *raw = finalUrl.absoluteString ?: @"";
+            NSString *encoded = [raw stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLFragmentAllowedCharacterSet]];
+            if (encoded.length > 0) {
+                NSURL *tmp = [NSURL URLWithString:encoded];
+                if (tmp) finalUrl = tmp;
+            }
+
+            NSLog(@"BetterPlayer iOS: final video url = %@", finalUrl.absoluteString);
+            NSLog(@"BetterPlayer iOS: final scheme = %@", finalUrl.scheme);
+
+            AVURLAsset* asset = [AVURLAsset URLAssetWithURL:finalUrl
                                                     options:@{@"AVURLAssetHTTPHeaderFieldsKey" : headers}];
 
             if (certificateUrl && certificateUrl != [NSNull null] && [certificateUrl length] > 0) {
                 NSURL * certificateNSURL = [[NSURL alloc] initWithString: certificateUrl];
                 NSURL * licenseNSURL = [[NSURL alloc] initWithString: licenseUrl];
-                _pallyconLoaderDelegate = [[BetterPlayerPallyconDrmAssetsLoaderDelegate alloc] init:certificateNSURL withLicenseURL:licenseNSURL withHeaders:drmHeaders];
+                NSString *licenseLower = [licenseUrl lowercaseString];
+
+                BOOL isGumlet = [licenseLower containsString:@"fairplay.gumlet.com"];
+
                 dispatch_queue_attr_t qos = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_DEFAULT, -1);
                 dispatch_queue_t streamQueue = dispatch_queue_create("streamQueue", qos);
-                [asset.resourceLoader setDelegate:_pallyconLoaderDelegate queue:streamQueue];
+
+                if (isGumlet) {
+                    _loaderDelegate = [[BetterPlayerGumletAssetsLoaderDelegate alloc] init:certificateNSURL
+                                                                            withLicenseURL:licenseNSURL];
+                    [asset.resourceLoader setDelegate:_loaderDelegate queue:streamQueue];
+                } else {
+                    _pallyconLoaderDelegate = [[BetterPlayerPallyconDrmAssetsLoaderDelegate alloc] init:certificateNSURL
+                                                                                         withLicenseURL:licenseNSURL
+                                                                                            withHeaders:drmHeaders];
+                    [asset.resourceLoader setDelegate:_pallyconLoaderDelegate queue:streamQueue];
+                }
             }
             item = [AVPlayerItem playerItemWithAsset:asset];
         }

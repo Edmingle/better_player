@@ -11,6 +11,7 @@
 #import "BetterPlayerView.h"
 #import "BetterPlayerEzDrmAssetsLoaderDelegate.h"
 #import "BetterPlayerPallyconDrmAssetsLoaderDelegate.h"
+#import "BetterPlayerGumletAssetsLoaderDelegate.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -19,7 +20,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface BetterPlayer : NSObject <FlutterPlatformView, FlutterStreamHandler, AVPictureInPictureControllerDelegate>
 @property(readonly, nonatomic) AVPlayer* player;
 @property(readonly, nonatomic) BetterPlayerPallyconDrmAssetsLoaderDelegate* pallyconLoaderDelegate;
-@property(readonly, nonatomic) BetterPlayerEzDrmAssetsLoaderDelegate* loaderDelegate;
+@property(readonly, nonatomic) id<AVAssetResourceLoaderDelegate> loaderDelegate;
 @property(nonatomic) FlutterEventChannel* eventChannel;
 @property(nonatomic) FlutterEventSink eventSink;
 @property(nonatomic) CGAffineTransform preferredTransform;
