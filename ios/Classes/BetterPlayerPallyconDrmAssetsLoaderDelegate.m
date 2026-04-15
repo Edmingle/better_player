@@ -24,7 +24,6 @@ NSString * DEFAULT_PALLYCON_LICENSE_SERVER_URL = @"https://license-global.pallyc
     }
 
     if (_siteId == nil) {
-        NSLog(@"siteId is null");
         return nil;
     }
 
@@ -37,8 +36,8 @@ NSString * DEFAULT_PALLYCON_LICENSE_SERVER_URL = @"https://license-global.pallyc
  **
  ** ---------------------------------------*/
 - (NSData *)getContentLicense:(NSData*)requestBytes and:(NSDictionary *)headers and:(NSError *)errorOut {
-    NSData * decodedData;
-    NSURLResponse * response;
+    NSData *decodedData = nil;
+    NSURLResponse *response = nil;
 
     NSURL * finalLicenseURL;
     if ([_licenseURL checkResourceIsReachableAndReturnError:nil] == NO) {
@@ -46,28 +45,31 @@ NSString * DEFAULT_PALLYCON_LICENSE_SERVER_URL = @"https://license-global.pallyc
     } else {
         finalLicenseURL = [[NSURL alloc] initWithString: DEFAULT_PALLYCON_LICENSE_SERVER_URL];
     }
-    
+
     NSURL * requestURL = [[NSURL alloc] initWithString: [NSString stringWithFormat:@"%@", finalLicenseURL]];
     NSString * pallyConSpc = [NSString stringWithFormat:@"spc=%@", [requestBytes base64EncodedStringWithOptions:0]];
-    NSData * data = [pallyConSpc dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *postBodyData = [pallyConSpc dataUsingEncoding:NSUTF8StringEncoding];
 
     NSMutableURLRequest * request = [[NSMutableURLRequest alloc] initWithURL:requestURL];
     [request setHTTPMethod:@"POST"];
-    [request setHTTPBody:data];
+    [request setHTTPBody:postBodyData];
 
     for (NSString* key in headers) {
         [request setValue:headers[key] forHTTPHeaderField:key];
     }
 
+    NSData *licenseResponseBody = nil;
     @try {
-        NSData * data = [self sendSynchronousRequest:request returningResponse:&response error:nil];
-        decodedData = [[NSData alloc] initWithBase64EncodedData:data options:NSDataBase64DecodingIgnoreUnknownCharacters];
+        licenseResponseBody = [self sendSynchronousRequest:request returningResponse:&response error:nil];
     }
     @catch (NSException* excp) {
-        NSLog(@"SDK Error, SDK responded with Error: (error)");
     }
-    
-    [self checkPallyConServerError:data];
+
+    [self checkPallyConServerError:licenseResponseBody];
+
+    if (licenseResponseBody != nil) {
+        decodedData = [[NSData alloc] initWithBase64EncodedData:licenseResponseBody options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    }
 
     return decodedData;
 }
@@ -79,27 +81,33 @@ NSString * DEFAULT_PALLYCON_LICENSE_SERVER_URL = @"https://license-global.pallyc
  ** ---------------------------------------*/
 - (NSData *)getAppCertificate:(NSString *)siteId {
     NSData * certificate = nil;
-    NSURLResponse * response;
-    
+    NSURLResponse * response = nil;
+
     NSURL * requestURL = [[NSURL alloc] initWithString: [NSString stringWithFormat:@"%@?siteId=%@", _certificateURL , siteId]];
 
     NSMutableURLRequest * request = [[NSMutableURLRequest alloc] initWithURL:requestURL];
     [request setHTTPMethod:@"POST"];
-    
+
+    NSData *rawCertBody = nil;
     @try {
-        NSData * cert = [self sendSynchronousRequest:request returningResponse:&response error:nil];
-        certificate = [[NSData alloc] initWithBase64EncodedData:cert options:NSDataBase64DecodingIgnoreUnknownCharacters];
+        rawCertBody = [self sendSynchronousRequest:request returningResponse:&response error:nil];
     }
     @catch (NSException* e) {
-        NSLog(@"SDK Error, SDK responded with Error: (error)");
     }
-    
-    [self checkPallyConServerError:certificate];
-    
+
+    [self checkPallyConServerError:rawCertBody];
+
+    if (rawCertBody != nil) {
+        certificate = [[NSData alloc] initWithBase64EncodedData:rawCertBody options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    }
+
     return certificate;
 }
 
 - (Boolean)checkPallyConServerError:(NSData *)response {
+    if (response == nil || response.length == 0) {
+        return true;
+    }
     NSError *error = nil;
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:response
                                                          options:kNilOptions
@@ -107,12 +115,11 @@ NSString * DEFAULT_PALLYCON_LICENSE_SERVER_URL = @"https://license-global.pallyc
     if (error) {
         return true;
     }
-    
+
     if (json[@"errorCode"] && json[@"message"]) {
-        NSLog(@"errorCode = %@, messsage = %@", json[@"errorCode"], json[@"message"]);
         return false;
     }
-    
+
     return true;
 }
 
@@ -145,7 +152,7 @@ NSString * DEFAULT_PALLYCON_LICENSE_SERVER_URL = @"https://license-global.pallyc
 
 - (BOOL)resourceLoader:(AVAssetResourceLoader *)resourceLoader shouldWaitForLoadingOfRequestedResource:(AVAssetResourceLoadingRequest *)loadingRequest {
     NSURL *assetURI = loadingRequest.request.URL;
-    
+
     NSString * fullAssetID = assetURI.absoluteString;
     NSData * assetIDData = [fullAssetID dataUsingEncoding:NSUTF8StringEncoding];
 
@@ -155,11 +162,19 @@ NSString * DEFAULT_PALLYCON_LICENSE_SERVER_URL = @"https://license-global.pallyc
     if (!([scheme isEqualToString: @"skd"])){
         return NO;
     }
+
     @try {
         certificate = [self getAppCertificate:_siteId];
     }
     @catch (NSException* excp) {
         [loadingRequest finishLoadingWithError:[[NSError alloc] initWithDomain:NSURLErrorDomain code:NSURLErrorClientCertificateRejected userInfo:nil]];
+        return YES;
+    }
+
+    if (certificate == nil || certificate.length == 0) {
+        NSError *err = [NSError errorWithDomain:@"BetterPlayerPallyCon" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"FairPlay certificate empty"}];
+        [loadingRequest finishLoadingWithError:err];
+        return YES;
     }
 
     @try {
@@ -171,7 +186,7 @@ NSString * DEFAULT_PALLYCON_LICENSE_SERVER_URL = @"https://license-global.pallyc
     }
 
     NSData * responseData;
-    NSError * error;
+    NSError * error = nil;
 
     responseData = [self getContentLicense:requestBytes and:_requestHeaders and:error];
 
@@ -180,7 +195,8 @@ NSString * DEFAULT_PALLYCON_LICENSE_SERVER_URL = @"https://license-global.pallyc
         [dataRequest respondWithData:responseData];
         [loadingRequest finishLoading];
     } else {
-        [loadingRequest finishLoadingWithError:error];
+        NSError *fail = error ?: [NSError errorWithDomain:@"BetterPlayerPallyCon" code:-2 userInfo:@{NSLocalizedDescriptionKey: @"Empty CKC / license failure"}];
+        [loadingRequest finishLoadingWithError:fail];
     }
 
     return YES;
