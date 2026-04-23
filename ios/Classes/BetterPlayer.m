@@ -224,12 +224,7 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
             }
         }
 
-        NSString *raw = finalUrl.absoluteString ?: @"";
-        NSString *encoded = [raw stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLFragmentAllowedCharacterSet]];
-        if (encoded.length > 0) {
-            NSURL *tmp = [NSURL URLWithString:encoded];
-            if (tmp) finalUrl = tmp;
-        }
+        // Avoid URLFragmentAllowedCharacterSet on full URLs — it double-encodes `%` (e.g. %20 → %2520).
 
         NSLog(@"BetterPlayer iOS: final video url = %@", finalUrl.absoluteString);
         NSLog(@"BetterPlayer iOS: final scheme = %@", finalUrl.scheme);
@@ -303,12 +298,7 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
                 }
             }
 
-            NSString *raw = finalUrl.absoluteString ?: @"";
-            NSString *encoded = [raw stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLFragmentAllowedCharacterSet]];
-            if (encoded.length > 0) {
-                NSURL *tmp = [NSURL URLWithString:encoded];
-                if (tmp) finalUrl = tmp;
-            }
+            // Avoid URLFragmentAllowedCharacterSet on full URLs — it double-encodes `%` (e.g. %20 → %2520).
 
             NSLog(@"BetterPlayer iOS: final video url = %@", finalUrl.absoluteString);
             NSLog(@"BetterPlayer iOS: final scheme = %@", finalUrl.scheme);
