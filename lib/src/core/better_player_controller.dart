@@ -63,6 +63,26 @@ class BetterPlayerController {
   ///Flag used to store full screen mode state.
   bool get isFullScreen => _isFullScreen;
 
+  ///Transformation controller for fullscreen pinch-to-zoom on the video layer.
+  TransformationController? _fullscreenTransformationController;
+
+  TransformationController? get fullscreenTransformationController =>
+      _fullscreenTransformationController;
+
+  void attachFullscreenTransformationController(
+    TransformationController controller,
+  ) {
+    _fullscreenTransformationController = controller;
+  }
+
+  void detachFullscreenTransformationController() {
+    _fullscreenTransformationController = null;
+  }
+
+  void resetFullscreenZoom() {
+    _fullscreenTransformationController?.value = Matrix4.identity();
+  }
+
   ///Time when last progress event was sent
   int _lastPositionSelection = 0;
 
@@ -595,6 +615,7 @@ class BetterPlayerController {
   ///Disables full screen mode in player. This will trigger route change.
   void exitFullScreen() {
     _isFullScreen = false;
+    resetFullscreenZoom();
     _postControllerEvent(BetterPlayerControllerEvent.hideFullscreen);
   }
 
@@ -604,6 +625,7 @@ class BetterPlayerController {
     if (_isFullScreen) {
       _postControllerEvent(BetterPlayerControllerEvent.openFullscreen);
     } else {
+      resetFullscreenZoom();
       _postControllerEvent(BetterPlayerControllerEvent.hideFullscreen);
     }
   }
@@ -685,11 +707,11 @@ class BetterPlayerController {
     ));
   }
 
-  ///Set playback speed of video. Allows to set speed value between 0 and 2.
+  ///Set playback speed of video. Allows to set speed value between 0 and 4.
   Future<void> setSpeed(double speed) async {
-    if (speed <= 0 || speed > 2) {
-      BetterPlayerUtils.log("Speed must be between 0 and 2");
-      throw ArgumentError("Speed must be between 0 and 2");
+    if (speed <= 0 || speed > 4) {
+      BetterPlayerUtils.log("Speed must be between 0 and 4");
+      throw ArgumentError("Speed must be between 0 and 4");
     }
     if (videoPlayerController == null) {
       BetterPlayerUtils.log("The data source has not been initialized");

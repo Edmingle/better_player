@@ -345,9 +345,13 @@ void main() {
         expect(mockVideoPlayerController.speed, 1.1);
         betterPlayerMockController.setSpeed(0.5);
         expect(mockVideoPlayerController.speed, 0.5);
-        expect(() => betterPlayerMockController.setSpeed(2.5),
+        betterPlayerMockController.setSpeed(2.5);
+        expect(mockVideoPlayerController.speed, 2.5);
+        betterPlayerMockController.setSpeed(4.0);
+        expect(mockVideoPlayerController.speed, 4.0);
+        expect(() => betterPlayerMockController.setSpeed(4.5),
             throwsA(isA<ArgumentError>()));
-        expect(mockVideoPlayerController.speed, 0.5);
+        expect(mockVideoPlayerController.speed, 4.0);
         expect(() => betterPlayerMockController.setSpeed(0.0),
             throwsA(isA<ArgumentError>()));
         expect(mockVideoPlayerController.speed, 0.5);
