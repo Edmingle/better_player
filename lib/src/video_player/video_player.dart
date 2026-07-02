@@ -567,7 +567,7 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
 
   /// Sets the speed of [this].
   ///
-  /// [speed] indicates a value between 0.0 and 2.0 on a linear scale.
+  /// [speed] indicates a value between 0.0 and 4.0 on a linear scale.
   Future<void> setSpeed(double speed) async {
     final double previousSpeed = value.speed;
     try {

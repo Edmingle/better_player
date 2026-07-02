@@ -21,6 +21,8 @@ class BetterPlayerWithControls extends StatefulWidget {
 }
 
 class _BetterPlayerWithControlsState extends State<BetterPlayerWithControls> {
+  static const double _fullscreenMaxZoomScale = 2.0;
+
   BetterPlayerSubtitlesConfiguration get subtitlesConfiguration =>
       widget.controller!.betterPlayerConfiguration.subtitlesConfiguration;
 
@@ -34,9 +36,18 @@ class _BetterPlayerWithControlsState extends State<BetterPlayerWithControls> {
 
   StreamSubscription? _controllerEventSubscription;
 
+  final TransformationController _fullscreenZoomController =
+      TransformationController();
+
+  bool _wasFullScreen = false;
+
   @override
   void initState() {
     playerVisibilityStreamController.add(true);
+    _wasFullScreen = widget.controller?.isFullScreen ?? false;
+    widget.controller?.attachFullscreenTransformationController(
+      _fullscreenZoomController,
+    );
     _controllerEventSubscription =
         widget.controller!.controllerEventStream.listen(_onControllerChanged);
     super.initState();
@@ -54,12 +65,19 @@ class _BetterPlayerWithControlsState extends State<BetterPlayerWithControls> {
 
   @override
   void dispose() {
+    widget.controller?.detachFullscreenTransformationController();
+    _fullscreenZoomController.dispose();
     playerVisibilityStreamController.close();
     _controllerEventSubscription?.cancel();
     super.dispose();
   }
 
   void _onControllerChanged(BetterPlayerControllerEvent event) {
+    final isFullScreen = widget.controller?.isFullScreen ?? false;
+    if (_wasFullScreen && !isFullScreen) {
+      widget.controller?.resetFullscreenZoom();
+    }
+    _wasFullScreen = isFullScreen;
     setState(() {
       if (!_initialized) {
         _initialized = true;
@@ -124,19 +142,21 @@ class _BetterPlayerWithControlsState extends State<BetterPlayerWithControls> {
 
     final bool placeholderOnTop =
         betterPlayerController.betterPlayerConfiguration.placeholderOnTop;
+    final Widget videoLayer = Transform.rotate(
+      angle: rotation * pi / 180,
+      child: _buildVideoLayer(betterPlayerController),
+    );
+
     // ignore: avoid_unnecessary_containers
     return Container(
       child: Stack(
         fit: StackFit.passthrough,
         children: <Widget>[
           if (placeholderOnTop) _buildPlaceholder(betterPlayerController),
-          Transform.rotate(
-            angle: rotation * pi / 180,
-            child: _BetterPlayerVideoFitWidget(
-              betterPlayerController,
-              betterPlayerController.getFit(),
-            ),
-          ),
+          if (betterPlayerController.isFullScreen)
+            Positioned.fill(child: videoLayer)
+          else
+            videoLayer,
           betterPlayerController.betterPlayerConfiguration.overlay ??
               Container(),
           BetterPlayerSubtitlesDrawer(
@@ -148,6 +168,40 @@ class _BetterPlayerWithControlsState extends State<BetterPlayerWithControls> {
           if (!placeholderOnTop) _buildPlaceholder(betterPlayerController),
           _buildControls(context, betterPlayerController),
         ],
+      ),
+    );
+  }
+
+  Widget _buildVideoLayer(BetterPlayerController betterPlayerController) {
+    final Widget videoFitWidget = _BetterPlayerVideoFitWidget(
+      betterPlayerController,
+      betterPlayerController.getFit(),
+    );
+
+    if (!betterPlayerController.isFullScreen) {
+      return videoFitWidget;
+    }
+
+    final transformationController =
+        betterPlayerController.fullscreenTransformationController;
+    if (transformationController == null) {
+      return videoFitWidget;
+    }
+
+    return ClipRect(
+      child: InteractiveViewer(
+        transformationController: transformationController,
+        minScale: 1.0,
+        maxScale: _fullscreenMaxZoomScale,
+        panEnabled: true,
+        scaleEnabled: true,
+        clipBehavior: Clip.hardEdge,
+        onInteractionEnd: (_) {
+          if (transformationController.value.getMaxScaleOnAxis() <= 1.01) {
+            transformationController.value = Matrix4.identity();
+          }
+        },
+        child: SizedBox.expand(child: videoFitWidget),
       ),
     );
   }
