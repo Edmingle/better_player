@@ -19,6 +19,11 @@ API_AVAILABLE(ios(9.0))
 AVPictureInPictureController *_pipController;
 #endif
 
+@interface BetterPlayer ()
+@property(nonatomic, strong) NSTimer* skipTimer;
+@property(nonatomic) double skipSpeed;
+@end
+
 @implementation BetterPlayer
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super init];
@@ -69,6 +74,7 @@ AVPictureInPictureController *_pipController;
 }
 
 - (void)clear {
+    [self stopSkipTimer];
     _isInitialized = false;
     _isPlaying = false;
     _disposed = false;
@@ -340,7 +346,10 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
     _key = key;
     _stalledCount = 0;
     _isStalledCheckStarted = false;
+    [self stopSkipTimer];
     _playerRate = 1;
+    // Default pitch algorithm only supports rates up to 2.0x; Spectral supports 1/32x-32x.
+    item.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmSpectral;
     [_player replaceCurrentItemWithPlayerItem:item];
 
     AVAsset* asset = [item asset];
@@ -674,8 +683,56 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
         }
     }
 
+    if (_player.currentItem) {
+        _player.currentItem.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmSpectral;
+    }
+    [self stopSkipTimer];
+    // AVPlayer cannot natively play HLS/FairPlay streams faster than 2x (it jumps to the end
+    // and keeps loading). Play at 2x and skip ahead through buffered data to emulate it.
+    if (_playerRate > 2.0 && !_player.currentItem.canPlayFastForward) {
+        _skipSpeed = _playerRate;
+        _playerRate = 2.0;
+        [self startSkipTimer];
+    }
     if (_isPlaying){
         _player.rate = _playerRate;
+    }
+}
+
+- (void)startSkipTimer {
+    [self stopSkipTimer];
+    __weak BetterPlayer* weakSelf = self;
+    _skipTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer* t) {
+        [weakSelf skipTick];
+    }];
+}
+
+- (void)stopSkipTimer {
+    [_skipTimer invalidate];
+    _skipTimer = nil;
+    _skipSpeed = 0;
+}
+
+- (void)skipTick {
+    if (!_isPlaying || _skipSpeed <= 2.0 || _player.rate == 0 || !_player.currentItem) {
+        return;
+    }
+    // Extra media time to cover each 0.5s of wall time on top of the 2x already played.
+    double extra = (_skipSpeed - 2.0) * 0.5;
+    double now = CMTimeGetSeconds(_player.currentItem.currentTime);
+    double target = now + extra;
+    // Only skip within data that is already buffered, with a small safety margin.
+    for (NSValue* v in _player.currentItem.loadedTimeRanges) {
+        CMTimeRange r = [v CMTimeRangeValue];
+        double start = CMTimeGetSeconds(r.start);
+        double end = start + CMTimeGetSeconds(r.duration);
+        if (now >= start && target < end - 1.0) {
+            [_player seekToTime:CMTimeMakeWithSeconds(target, 600)
+                toleranceBefore:kCMTimePositiveInfinity
+                 toleranceAfter:kCMTimePositiveInfinity
+              completionHandler:nil];
+            return;
+        }
     }
 }
 
