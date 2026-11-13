@@ -22,6 +22,9 @@ AVPictureInPictureController *_pipController;
 @interface BetterPlayer ()
 @property(nonatomic, strong) NSTimer* skipTimer;
 @property(nonatomic) double skipSpeed;
+@property(nonatomic) BOOL skipSeeking;
+@property(nonatomic) CFTimeInterval skipLastWall;
+@property(nonatomic) double skipLastTarget;
 @end
 
 @implementation BetterPlayer
@@ -639,6 +642,7 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
 - (void)seekTo:(int)location {
     ///When player is playing, pause video, seek to new position and start again. This will prevent issues with seekbar jumps.
     bool wasPlaying = _isPlaying;
+    _skipLastWall = 0; // re-anchor skip pacing after a user seek
     if (wasPlaying){
         [_player pause];
     }
@@ -686,13 +690,19 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
     if (_player.currentItem) {
         _player.currentItem.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmSpectral;
     }
+    NSLog(@"[BP-SPEED] setSpeed requested=%.2f playerRate=%.2f canPlayFastForward=%d isPlaying=%d hasItem=%d", speed, _playerRate, _player.currentItem.canPlayFastForward, _isPlaying, _player.currentItem != nil);
     [self stopSkipTimer];
     // AVPlayer cannot natively play HLS/FairPlay streams faster than 2x (it jumps to the end
     // and keeps loading). Play at 2x and skip ahead through buffered data to emulate it.
     if (_playerRate > 2.0 && !_player.currentItem.canPlayFastForward) {
-        _skipSpeed = _playerRate;
+        // Native >2x on this stream jumps to the end and buffers forever; emulate instead.
+        double target = _playerRate;
         _playerRate = 2.0;
         [self startSkipTimer];
+        _skipSpeed = target; // after startSkipTimer, which resets it
+        _skipLastWall = CACurrentMediaTime();
+        _skipLastTarget = CMTimeGetSeconds(_player.currentItem.currentTime);
+        NSLog(@"[BP-SPEED] skip emulation ON target=%.2f", target);
     }
     if (_isPlaying){
         _player.rate = _playerRate;
@@ -702,7 +712,7 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
 - (void)startSkipTimer {
     [self stopSkipTimer];
     __weak BetterPlayer* weakSelf = self;
-    _skipTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer* t) {
+    _skipTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:YES block:^(NSTimer* t) {
         [weakSelf skipTick];
     }];
 }
@@ -711,29 +721,58 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
     [_skipTimer invalidate];
     _skipTimer = nil;
     _skipSpeed = 0;
+    _skipSeeking = NO;
+    _skipLastWall = 0;
 }
 
 - (void)skipTick {
-    if (!_isPlaying || _skipSpeed <= 2.0 || _player.rate == 0 || !_player.currentItem) {
+    if (!_isPlaying || _skipSpeed <= 2.0 || _player.rate == 0 || _skipSeeking || !_player.currentItem) {
+        NSLog(@"[BP-SPEED] tick bail isPlaying=%d skipSpeed=%.2f rate=%.2f skipSeeking=%d hasItem=%d", _isPlaying, _skipSpeed, _player.rate, _skipSeeking, _player.currentItem != nil);
         return;
     }
-    // Extra media time to cover each 0.5s of wall time on top of the 2x already played.
-    double extra = (_skipSpeed - 2.0) * 0.5;
     double now = CMTimeGetSeconds(_player.currentItem.currentTime);
+    CFTimeInterval wall = CACurrentMediaTime();
+    // Each seek costs some playback time, so compute the skip from elapsed wall time:
+    // media time we should have covered at _skipSpeed, minus what we actually covered.
+    double extra = _skipSpeed - 2.0;
+    if (_skipLastWall > 0 && wall - _skipLastWall < 6.0) {
+        double wanted = (wall - _skipLastWall) * _skipSpeed;
+        double covered = now - _skipLastTarget;
+        extra = wanted - covered;
+    }
+    extra = MAX(0.0, MIN(extra, _skipSpeed * 4.0));
+    NSLog(@"[BP-SPEED] tick now=%.2f extra=%.2f skipSpeed=%.2f rate=%.2f ranges=%@", now, extra, _skipSpeed, _player.rate, _player.currentItem.loadedTimeRanges);
+    if (extra < 0.2) {
+        _skipLastWall = wall;
+        _skipLastTarget = now;
+        return;
+    }
     double target = now + extra;
+    NSLog(@"[BP-SPEED] tick target=%.2f", target);
     // Only skip within data that is already buffered, with a small safety margin.
     for (NSValue* v in _player.currentItem.loadedTimeRanges) {
         CMTimeRange r = [v CMTimeRangeValue];
         double start = CMTimeGetSeconds(r.start);
         double end = start + CMTimeGetSeconds(r.duration);
         if (now >= start && target < end - 1.0) {
+            _skipSeeking = YES;
+            _skipLastWall = wall;
+            _skipLastTarget = target;
+            __weak BetterPlayer* weakSelf = self;
             [_player seekToTime:CMTimeMakeWithSeconds(target, 600)
-                toleranceBefore:kCMTimePositiveInfinity
-                 toleranceAfter:kCMTimePositiveInfinity
-              completionHandler:nil];
+                toleranceBefore:kCMTimeZero
+                 toleranceAfter:CMTimeMake(3, 1)
+              completionHandler:^(BOOL finished) {
+                // Seek may land on a later keyframe than requested; track the real position
+                // so the next skip compensates (keeps the average speed correct).
+                weakSelf.skipLastTarget = CMTimeGetSeconds(weakSelf.player.currentItem.currentTime);
+                weakSelf.skipSeeking = NO;
+                NSLog(@"[BP-SPEED] skip seek done finished=%d landed=%.2f rate=%.2f", finished, weakSelf.skipLastTarget, weakSelf.player.rate);
+              }];
             return;
         }
     }
+    NSLog(@"[BP-SPEED] tick: target %.2f not inside any buffered range, no skip", target);
 }
 
 
