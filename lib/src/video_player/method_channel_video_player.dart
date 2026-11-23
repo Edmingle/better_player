@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'video_player_platform_interface.dart';
+import 'package:better_player/src/core/better_player_native_diagnostics.dart';
 
 const MethodChannel _channel = MethodChannel('better_player_channel');
 
@@ -406,6 +407,20 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
         case 'pipStop':
           return VideoEvent(
             eventType: VideoEventType.pipStop,
+            key: key,
+          );
+
+        case 'diagnostic':
+          BetterPlayerNativeDiagnostics.add(BetterPlayerNativeDiagnosticEvent(
+            textureId: textureId,
+            name: map['name']?.toString() ?? 'unknown',
+            data: BetterPlayerNativeDiagnostics.normalize(map['data']),
+            nativeTimeMs: map['nativeTimeMs'] is int
+                ? map['nativeTimeMs'] as int
+                : null,
+          ));
+          return VideoEvent(
+            eventType: VideoEventType.unknown,
             key: key,
           );
 

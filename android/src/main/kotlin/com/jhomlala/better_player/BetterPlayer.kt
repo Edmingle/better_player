@@ -78,6 +78,8 @@ internal class BetterPlayer(
 ) {
     private val exoPlayer: ExoPlayer?
     private val eventSink = QueuingEventSink()
+    private val diagnostics = BetterPlayerDiagnostics(eventSink)
+    private var diagnosticsListener: BetterPlayerDiagnostics.Listener? = null
     private val trackSelector: DefaultTrackSelector = DefaultTrackSelector(context)
     private val loadControl: LoadControl
     private var isInitialized = false
@@ -109,6 +111,9 @@ internal class BetterPlayer(
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
             .build()
+        exoPlayer?.let { player ->
+            diagnosticsListener = diagnostics.Listener(player).also { player.addAnalyticsListener(it) }
+        }
         workManager = WorkManager.getInstance(context)
         workerObserverMap = HashMap()
         setupVideoPlayer(eventChannel, textureEntry, result)
@@ -135,6 +140,10 @@ internal class BetterPlayer(
         val uri = Uri.parse(dataSource)
         var dataSourceFactory: DataSource.Factory?
         val userAgent = getUserAgent(headers)
+        emitSetupDiagnostics(
+            uri, formatHint, headers, useCache, overriddenDuration,
+            licenseUrl, drmHeaders, cacheKey, clearKey
+        )
         if (licenseUrl != null && licenseUrl.isNotEmpty()) {
             val httpMediaDrmCallback =
                 HttpMediaDrmCallback(licenseUrl, DefaultHttpDataSource.Factory())
@@ -143,6 +152,8 @@ internal class BetterPlayer(
                     httpMediaDrmCallback.setKeyRequestProperty(drmKey, drmValue)
                 }
             }
+            val loggingDrmCallback =
+                diagnostics.LoggingMediaDrmCallback(httpMediaDrmCallback, licenseUrl)
             if (Util.SDK_INT < 18) {
                 Log.e(TAG, "Protected content not supported on API levels below 18")
                 drmSessionManager = null
@@ -155,15 +166,46 @@ internal class BetterPlayer(
                         ) { uuid: UUID? ->
                             try {
                                 val mediaDrm = FrameworkMediaDrm.newInstance(uuid!!)
-                                // Force L3.
-                                mediaDrm.setPropertyString("securityLevel", "L3")
+                                val defaultLevel = try {
+                                    mediaDrm.getPropertyString("securityLevel")
+                                } catch (e: Exception) {
+                                    "n/a: $e"
+                                }
+                                // Force L3. Flutter draws video through a SurfaceTexture, which
+                                // cannot show the protected output of an L1 secure decoder
+                                // (green screen with audio on L1 devices). L3 decrypts to a
+                                // normal decoder whose frames the texture can display.
+                                var forceL3Error: String? = null
+                                try {
+                                    mediaDrm.setPropertyString("securityLevel", "L3")
+                                } catch (e: Exception) {
+                                    forceL3Error = BetterPlayerDiagnostics.describeThrowable(e)
+                                }
+                                diagnostics.emit(
+                                    "drm_media_drm_created", mapOf(
+                                        "defaultSecurityLevel" to defaultLevel,
+                                        "securityLevelInUse" to try {
+                                            mediaDrm.getPropertyString("securityLevel")
+                                        } catch (e: Exception) {
+                                            "n/a: $e"
+                                        },
+                                        "forcedL3" to (forceL3Error == null),
+                                        "forceL3Error" to forceL3Error
+                                    )
+                                )
                                 return@setUuidAndExoMediaDrmProvider mediaDrm
                             } catch (e: UnsupportedDrmException) {
+                                diagnostics.emit(
+                                    "drm_unsupported", mapOf(
+                                        "reason" to e.reason,
+                                        "error" to BetterPlayerDiagnostics.describeThrowable(e)
+                                    )
+                                )
                                 return@setUuidAndExoMediaDrmProvider DummyExoMediaDrm()
                             }
                         }
                         .setMultiSession(false)
-                        .build(httpMediaDrmCallback)
+                        .build(loggingDrmCallback)
                 }
             }
         } else if (clearKey != null && clearKey.isNotEmpty()) {
@@ -374,6 +416,57 @@ internal class BetterPlayer(
         bitmap = null
     }
 
+    /**
+     * Describes the source and DRM setup, then (off the main thread) the device's
+     * Widevine and decoder capabilities. Tokens and header values are never sent.
+     */
+    private fun emitSetupDiagnostics(
+        uri: Uri,
+        formatHint: String?,
+        headers: Map<String, String>?,
+        useCache: Boolean,
+        overriddenDuration: Long,
+        licenseUrl: String?,
+        drmHeaders: Map<String, String>?,
+        cacheKey: String?,
+        clearKey: String?
+    ) {
+        val lastPathSegment = uri.lastPathSegment ?: ""
+        diagnostics.emit(
+            "native_setup", mapOf(
+                "url" to BetterPlayerDiagnostics.safeUri(uri),
+                "hasQuery" to !uri.query.isNullOrEmpty(),
+                "formatHint" to formatHint,
+                "inferredType" to Util.inferContentType(lastPathSegment),
+                "drm" to when {
+                    !licenseUrl.isNullOrEmpty() -> "widevine"
+                    !clearKey.isNullOrEmpty() -> "clearkey"
+                    else -> "none"
+                },
+                "licenseUrl" to BetterPlayerDiagnostics.safeUrl(licenseUrl),
+                "licenseUrlHasQuery" to (licenseUrl?.contains("?") == true),
+                "drmHeaderNames" to (drmHeaders?.keys?.toList() ?: emptyList<String>()),
+                "headerNames" to (headers?.keys?.toList() ?: emptyList<String>()),
+                "useCache" to useCache,
+                "hasCacheKey" to !cacheKey.isNullOrEmpty(),
+                "overriddenDurationMs" to overriddenDuration,
+                "exoPlayerVersion" to ExoPlayerLibraryInfo.VERSION
+            )
+        )
+        Thread {
+            try {
+                diagnostics.emit("device_info", BetterPlayerDiagnostics.deviceInfo())
+                diagnostics.emit("widevine_info", BetterPlayerDiagnostics.widevineInfo())
+                diagnostics.emit("decoder_info", BetterPlayerDiagnostics.decoderInfo())
+            } catch (e: Throwable) {
+                diagnostics.emit(
+                    "capability_probe_failed",
+                    mapOf("error" to BetterPlayerDiagnostics.describeThrowable(e))
+                )
+            }
+        }.start()
+    }
+
     private fun buildMediaSource(
         uri: Uri,
         mediaDataSourceFactory: DataSource.Factory,
@@ -482,7 +575,11 @@ internal class BetterPlayer(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                eventSink.error("VideoError", "Video player had error $error", "")
+                eventSink.error(
+                    "VideoError",
+                    "Video player had error ${error.errorCodeName}: $error",
+                    BetterPlayerDiagnostics.describeThrowable(error)
+                )
             }
         })
         val reply: MutableMap<String, Any> = HashMap()
@@ -742,6 +839,7 @@ internal class BetterPlayer(
         textureEntry.release()
         eventChannel.setStreamHandler(null)
         surface?.release()
+        diagnosticsListener?.stop()
         exoPlayer?.release()
     }
 
